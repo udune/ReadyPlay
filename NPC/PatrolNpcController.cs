@@ -5,123 +5,131 @@ using Random = UnityEngine.Random;
 
 public class PatrolNpcController : MonoBehaviour
 {
+    [Header("Detection Settings")]
     public float viewRange;
     public LayerMask playerMask;
-    [Range(0.0f, 10.0f)] public float minIdleTime = 0.0f;
-    [Range(0.0f, 10.0f)] public float maxIdleTime = 10.0f;
-    
+
+    [Header("Idle Time Settings")]
+    [Range(0f, 10f)] public float minIdleTime = 0f;
+    [Range(0f, 10f)] public float maxIdleTime = 10f;
+
     private NavMeshAgent agent;
-    private PatrolNpcInfo patrolNpcInfo; public PatrolNpcInfo PatrolNpcInfo => patrolNpcInfo;
+    private PatrolNpcInfo patrolNpcInfo;
+    public PatrolNpcInfo PatrolNpcInfo => patrolNpcInfo;
+
     private Transform player;
     private float idleTime;
-    private float duration;
-    private BasePatrolNpc curState;
+    private float elapsedTime;
+    private BasePatrolNpc currentState;
 
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
         patrolNpcInfo = GetComponentInChildren<PatrolNpcInfo>();
-        transform.SetParent(ObjectManager.PatrolNpc, true);
-        transform.localScale = Vector3.one;
+        SetupHierarchy();
     }
 
     private void Update()
     {
-        duration += Time.deltaTime;
-        if (curState != null)
-            curState.OnUpdate(Time.deltaTime);
+        elapsedTime += Time.deltaTime;
+        currentState?.OnUpdate(Time.deltaTime);
+    }
+
+    private void SetupHierarchy()
+    {
+        transform.SetParent(ObjectManager.PatrolNpc, true);
+        transform.localScale = Vector3.one;
     }
 
     public void StartPatrol(List<Transform> patrolPoints)
     {
-        List<Transform> wayPointList = new List<Transform>();
-        List<int> wayPointIdxList = new List<int>();
-        int pointCount = patrolPoints.Count;
-        for (var i = 0; i < pointCount; i++)
-        {
-            int patrolIdx = Random.Range(0, pointCount);
-            if (wayPointIdxList.Contains(patrolIdx))
-                continue;
-            wayPointIdxList.Add(patrolIdx);
-            if (wayPointIdxList.Count == pointCount)
-                break;
-        }
-        foreach (var idx in wayPointIdxList)
-            wayPointList.Add(patrolPoints[idx]);
-        patrolNpcInfo.SetWayPointList(wayPointList);
+        List<Transform> shuffledWaypoints = GetShuffledWaypoints(patrolPoints);
+        patrolNpcInfo.SetWayPointList(shuffledWaypoints);
         transform.position = patrolNpcInfo.GetFirstWayPointPosition();
+
         ChangeState<PatrolNpcMove>();
+    }
+
+    private List<Transform> GetShuffledWaypoints(List<Transform> originalPoints)
+    {
+        var shuffled = new List<Transform>();
+        var usedIndices = new HashSet<int>();
+
+        while (shuffled.Count < originalPoints.Count)
+        {
+            int index = Random.Range(0, originalPoints.Count);
+            if (usedIndices.Add(index))
+                shuffled.Add(originalPoints[index]);
+        }
+
+        return shuffled;
     }
 
     public T ChangeState<T>(bool isSearchPlayer = true) where T : BasePatrolNpc
     {
-        if (curState != null)
+        if (currentState != null)
         {
-            if (curState.GetType() == typeof(T))
-                return curState as T;
-            
-            curState.OnEnd();
+            if (currentState.GetType() == typeof(T))
+                return currentState as T;
+
+            currentState.OnEnd();
         }
-        
-        DestroyState<BasePatrolNpc>();
-        curState = AddState<T>();
-        curState.SetIsSearchPlayer(isSearchPlayer);
-        curState.OnStart();
-        duration = 0.0f;
 
-        return curState as T;
+        DestroyComponent<BasePatrolNpc>();
+        currentState = AddComponent<T>();
+        currentState.SetIsSearchPlayer(isSearchPlayer);
+        currentState.OnStart();
+        elapsedTime = 0f;
+
+        return currentState as T;
     }
 
-    private void DestroyState<T>() where T : Component
+    private void DestroyComponent<T>() where T : Component
     {
-        var state = GetComponent<T>();
-        if (state != null)
-            Destroy(state);
+        T component = GetComponent<T>();
+        if (component != null)
+            Destroy(component);
     }
-    
-    private T AddState<T>() where T : Component
-    {
-        return gameObject.AddComponent<T>();
-    }
+
+    private T AddComponent<T>() where T : Component => gameObject.AddComponent<T>();
 
     public Transform SearchPlayer()
     {
-        player = null;
-        Collider[] playerInView = Physics.OverlapSphere(transform.position, viewRange, playerMask);
-        if (playerInView.Length > 0)
-            player = playerInView[0].transform;
+        Collider[] hits = Physics.OverlapSphere(transform.position, viewRange, playerMask);
+        player = hits.Length > 0 ? hits[0].transform : null;
         return player;
     }
 
     public void SetDestination()
     {
-        Transform destination = FindWayPoint();
-        if (destination != null)
-            agent.SetDestination(destination.position);
+        Transform next = GetNextWayPoint();
+        if (next != null)
+            agent.SetDestination(next.position);
     }
 
-    public void SetDestination(Vector3 position)
-    {
-        agent.SetDestination(position);
-    }
+    public void SetDestination(Vector3 position) => agent.SetDestination(position);
 
-    public Transform FindWayPoint()
+    public Transform GetNextWayPoint()
     {
-        if (patrolNpcInfo.GetWayPointListCount() > 0)
-            patrolNpcInfo.SetTargetWayPoint(patrolNpcInfo.GetWayPointList()[patrolNpcInfo.GetWayPointIndex()]);
+        if (patrolNpcInfo.GetWayPointListCount() == 0)
+            return null;
+
+        patrolNpcInfo.SetTargetWayPoint(patrolNpcInfo.GetWayPointList()[patrolNpcInfo.GetWayPointIndex()]);
         patrolNpcInfo.SetWayPointIndex((patrolNpcInfo.GetWayPointIndex() + 1) % patrolNpcInfo.GetWayPointListCount());
         return patrolNpcInfo.GetTargetWayPoint();
     }
 
-    public Quaternion LookPlayer()
+    public Quaternion GetLookRotationToPlayer()
     {
-        var dir = player.position - transform.position; dir.y = 0.0f;
-        return Quaternion.LookRotation(dir.normalized);
+        if (player == null) return transform.rotation;
+        Vector3 direction = player.position - transform.position;
+        direction.y = 0f;
+        return Quaternion.LookRotation(direction.normalized);
     }
 
     public void Idle()
     {
-        patrolNpcInfo.PlayFloatAnimation(SalinConstants.AnimationType.Move.ToString(), 0.0f);
+        patrolNpcInfo.PlayFloatAnimation(SalinConstants.AnimationType.Move.ToString(), 0f);
         agent.isStopped = true;
     }
 
@@ -131,34 +139,25 @@ public class PatrolNpcController : MonoBehaviour
         patrolNpcInfo.PlayFloatAnimation(SalinConstants.AnimationType.Move.ToString(), 0.75f);
     }
 
-    public bool IsContact()
+    public bool IsContactWithPlayer()
     {
-        if (player == null)
-            return false;
-
-        float distance = Vector3.Distance(transform.position, player.position);
-        return distance <= viewRange;
+        if (player == null) return false;
+        return Vector3.Distance(transform.position, player.position) <= viewRange;
     }
 
-    public bool IsArrive()
+    public bool HasArrived()
     {
         return !agent.pathPending && agent.remainingDistance <= agent.stoppingDistance;
     }
 
-    public bool IsNextMove()
-    {
-        return duration > idleTime;
-    }
+    public bool HasFinishedIdle() => elapsedTime > idleTime;
 
-    public void SetIdleTime()
+    public void SetRandomIdleTime()
     {
         idleTime = Random.Range(minIdleTime, maxIdleTime);
     }
 
-    public void ResetPath()
-    {
-        agent.ResetPath();
-    }
+    public void ResetPath() => agent.ResetPath();
 
     private void OnDrawGizmos()
     {
