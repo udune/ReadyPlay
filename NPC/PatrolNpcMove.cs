@@ -6,54 +6,77 @@ public class PatrolNpcMove : BasePatrolNpc
 {
     public override void OnStart()
     {
-        if (controller.PatrolNpcInfo.GetTargetWayPoint() == null)
-            controller.FindWayPoint();
-
-        if (controller.PatrolNpcInfo.GetTargetWayPoint())
-        {
-            controller.SetDestination(controller.PatrolNpcInfo.GetTargetWayPoint().position);
-            controller.Move();
-        }
-        
-        Invoke(nameof(ResetIsSearchPlayer), 3.0f);
+        SetupInitialWaypoint();
+        TryMoveToTargetWaypoint();
+        Invoke(nameof(EnablePlayerSearch), 3.0f);
     }
 
     public override void OnUpdate(float deltaTime)
     {
-        Transform player = isSearchPlayer ? controller.SearchPlayer() : null;
-        if (player != null)
+        if (isSearchPlayer && TrySearchPlayer(out Transform player))
         {
-            if (controller.IsContact())
-            {
-                controller.ChangeState<PatrolNpcContact>();
-            }
-            else
-            {
-                
-            }
+            HandlePlayerDetection();
         }
         else
         {
-            if (controller.IsArrive())
-            {
-                controller.SetDestination();
-                controller.ChangeState<PatrolNpcIdle>();
-            }
-            else
-            {
-                controller.Move();
-            }
+            HandlePatrolMovement();
         }
-    }
-
-    public void ResetIsSearchPlayer()
-    {
-        isSearchPlayer = true;
     }
 
     public override void OnEnd()
     {
         controller.Idle();
         controller.ResetPath();
+    }
+
+    private void SetupInitialWaypoint()
+    {
+        if (controller.PatrolNpcInfo.GetTargetWayPoint() == null)
+        {
+            controller.FindWayPoint();
+        }
+    }
+
+    private void TryMoveToTargetWaypoint()
+    {
+        Transform waypoint = controller.PatrolNpcInfo.GetTargetWayPoint();
+        if (waypoint != null)
+        {
+            controller.SetDestination(waypoint.position);
+            controller.Move();
+        }
+    }
+
+    private bool TrySearchPlayer(out Transform player)
+    {
+        player = controller.SearchPlayer();
+        return player != null;
+    }
+
+    private void HandlePlayerDetection()
+    {
+        if (controller.IsContact())
+        {
+            controller.ChangeState<PatrolNpcContact>();
+        }
+        // else 부분이 비어 있으므로 삭제
+    }
+
+    private void HandlePatrolMovement()
+    {
+        if (controller.IsArrive())
+        {
+            controller.SetDestination(); // 다음 목적지 설정
+            controller.ChangeState<PatrolNpcIdle>();
+        }
+        else
+        {
+            controller.Move();
+        }
+    }
+
+    private void EnablePlayerSearch()
+    {
+        isSearchPlayer = true;
     }
 }
